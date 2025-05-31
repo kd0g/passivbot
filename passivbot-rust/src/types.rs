@@ -125,6 +125,9 @@ pub struct BotParams {
     pub unstuck_ema_dist: f64,
     pub unstuck_loss_allowance_pct: f64,
     pub unstuck_threshold: f64,
+    pub enable_divergence_entry: bool,
+    pub divergence_rsi_period: usize,
+    pub divergence_rsi_tolerance: f64,
 }
 
 #[derive(Debug)]
@@ -145,12 +148,21 @@ impl Default for TrailingPriceBundle {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct DivergenceBundle {
+    pub prev_low: f64,
+    pub curr_low: f64,
+    pub prev_rsi: f64,
+    pub curr_rsi: f64,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum OrderType {
     EntryInitialNormalLong,
     EntryInitialPartialLong,
     EntryTrailingNormalLong,
     EntryTrailingCroppedLong,
+    EntryDivergenceLong,
     EntryGridNormalLong,
     EntryGridCroppedLong,
     EntryGridInflatedLong,
@@ -183,6 +195,7 @@ impl fmt::Display for OrderType {
             OrderType::EntryInitialPartialLong => write!(f, "entry_initial_partial_long"),
             OrderType::EntryTrailingNormalLong => write!(f, "entry_trailing_normal_long"),
             OrderType::EntryTrailingCroppedLong => write!(f, "entry_trailing_cropped_long"),
+            OrderType::EntryDivergenceLong => write!(f, "entry_divergence_long"),
             OrderType::EntryGridNormalLong => write!(f, "entry_grid_normal_long"),
             OrderType::EntryGridCroppedLong => write!(f, "entry_grid_cropped_long"),
             OrderType::EntryGridInflatedLong => write!(f, "entry_grid_inflated_long"),

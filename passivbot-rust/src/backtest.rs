@@ -9,7 +9,7 @@ use crate::entries::{
 use crate::types::{
     Analysis, BacktestParams, Balance, BotParams, BotParamsPair, EMABands, Equities,
     ExchangeParams, Fill, Order, OrderBook, OrderType, Position, Positions, StateParams,
-    TrailingPriceBundle,
+    TrailingPriceBundle, DivergenceBundle,
 };
 use crate::utils::{
     calc_auto_unstuck_allowance, calc_new_psize_pprice, calc_pnl_long, calc_pnl_short,
@@ -100,6 +100,11 @@ pub struct TrailingPrices {
     pub short: HashMap<usize, TrailingPriceBundle>,
 }
 
+#[derive(Default, Debug)]
+pub struct DivergenceBundles {
+    pub long: HashMap<usize, DivergenceBundle>,
+}
+
 pub struct TrailingEnabled {
     long: bool,
     short: bool,
@@ -130,6 +135,7 @@ pub struct Backtest<'a> {
     positions: Positions,
     open_orders: OpenOrdersNew,
     trailing_prices: TrailingPrices,
+    divergence_bundles: DivergenceBundles,
     actives: Actives,
     pnl_cumsum_running: f64,
     pnl_cumsum_max: f64,
@@ -211,6 +217,7 @@ impl<'a> Backtest<'a> {
             positions: Positions::default(),
             open_orders: OpenOrdersNew::default(),
             trailing_prices: TrailingPrices::default(),
+            divergence_bundles: DivergenceBundles::default(),
             actives: Actives::default(),
             pnl_cumsum_running: 0.0,
             pnl_cumsum_max: 0.0,
@@ -869,6 +876,7 @@ impl<'a> Backtest<'a> {
             &self.bot_params_pair.long,
             position,
             &self.trailing_prices.long[&idx],
+            self.divergence_bundles.long.get(&idx).unwrap_or(&DivergenceBundle::default()),
         )
     }
 
@@ -944,6 +952,34 @@ impl<'a> Backtest<'a> {
         }
     }
 
+    fn update_divergence_bundle(&mut self, k: usize, idx: usize) {
+        let bundle = self.divergence_bundles.long.entry(idx).or_default();
+        bundle.prev_low = bundle.curr_low;
+        let start_low = k.saturating_sub(14);
+        bundle.curr_low = (start_low..=k)
+            .map(|i| self.hlcvs[[i, idx, LOW]])
+            .fold(f64::MAX, f64::min);
+        bundle.prev_rsi = bundle.curr_rsi;
+        let period = self.bot_params_pair.long.divergence_rsi_period.max(1) as usize;
+        let start = k.saturating_sub(period * 15);
+        let mut up = 0.0;
+        let mut down = 0.0;
+        for i in (start + 1)..=k {
+            let diff = self.hlcvs[[i, idx, CLOSE]] - self.hlcvs[[i - 1, idx, CLOSE]];
+            if diff > 0.0 {
+                up += diff;
+            } else {
+                down -= diff;
+            }
+        }
+        if down == 0.0 {
+            bundle.curr_rsi = 100.0;
+        } else {
+            let rs = up / down;
+            bundle.curr_rsi = 100.0 - 100.0 / (1.0 + rs);
+        }
+    }
+
     fn has_next_grid_order(&mut self, order: &Order, pside: usize) -> bool {
         match pside {
             LONG => {
@@ -973,6 +1009,9 @@ impl<'a> Backtest<'a> {
     }
 
     fn update_open_orders_long_single(&mut self, k: usize, idx: usize) {
+        if self.bot_params_pair.long.enable_divergence_entry {
+            self.update_divergence_bundle(k, idx);
+        }
         let state_params = self.create_state_params(k, idx, LONG);
         let position = self
             .positions
@@ -1010,6 +1049,7 @@ impl<'a> Backtest<'a> {
             &self.bot_params_pair.long,
             &position,
             &self.trailing_prices.long[&idx],
+            self.divergence_bundles.long.get(&idx).unwrap_or(&DivergenceBundle::default()),
         );
         // if initial entry or grid, peek next candle to see if order will fill
         if self.order_filled(k + 1, idx, &next_entry_order)
@@ -1021,6 +1061,7 @@ impl<'a> Backtest<'a> {
                 &self.bot_params_pair.long,
                 &position,
                 &self.trailing_prices.long[&idx],
+                self.divergence_bundles.long.get(&idx).unwrap_or(&DivergenceBundle::default()),
             );
         } else {
             self.open_orders.long.entry(idx).or_default().entries = [next_entry_order].to_vec();

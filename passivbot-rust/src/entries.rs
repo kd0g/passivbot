@@ -1,5 +1,6 @@
 use crate::types::{
-    BotParams, ExchangeParams, Order, OrderType, Position, StateParams, TrailingPriceBundle,
+    BotParams, ExchangeParams, Order, OrderType, Position, StateParams,
+    TrailingPriceBundle, DivergenceBundle,
 };
 use crate::utils::{
     calc_ema_price_ask, calc_ema_price_bid, calc_new_psize_pprice, calc_wallet_exposure,
@@ -303,6 +304,7 @@ pub fn calc_next_entry_long(
     bot_params: &BotParams,
     position: &Position,
     trailing_price_bundle: &TrailingPriceBundle,
+    divergence_bundle: &DivergenceBundle,
 ) -> Order {
     // determines whether trailing or grid order, returns Order
     if bot_params.wallet_exposure_limit == 0.0 || state_params.balance <= 0.0 {
@@ -311,13 +313,23 @@ pub fn calc_next_entry_long(
     }
     if bot_params.entry_trailing_grid_ratio >= 1.0 || bot_params.entry_trailing_grid_ratio <= -1.0 {
         // return trailing only
-        return calc_trailing_entry_long(
-            &exchange_params,
-            &state_params,
-            &bot_params,
-            &position,
-            &trailing_price_bundle,
-        );
+        return if bot_params.enable_divergence_entry {
+            calc_divergence_entry_long(
+                &exchange_params,
+                &state_params,
+                &bot_params,
+                &position,
+                &divergence_bundle,
+            )
+        } else {
+            calc_trailing_entry_long(
+                &exchange_params,
+                &state_params,
+                &bot_params,
+                &position,
+                &trailing_price_bundle,
+            )
+        };
     } else if bot_params.entry_trailing_grid_ratio == 0.0 {
         // return grid only
         return calc_grid_entry_long(&exchange_params, &state_params, &bot_params, &position);
@@ -334,24 +346,44 @@ pub fn calc_next_entry_long(
         if wallet_exposure_ratio < bot_params.entry_trailing_grid_ratio {
             // return trailing order, but crop to max bot_params.wallet_exposure_limit * bot_params.entry_trailing_grid_ratio + 1%
             if wallet_exposure == 0.0 {
-                calc_trailing_entry_long(
-                    &exchange_params,
-                    &state_params,
-                    &bot_params,
-                    &position,
-                    &trailing_price_bundle,
-                )
+                if bot_params.enable_divergence_entry {
+                    calc_divergence_entry_long(
+                        &exchange_params,
+                        &state_params,
+                        &bot_params,
+                        &position,
+                        &divergence_bundle,
+                    )
+                } else {
+                    calc_trailing_entry_long(
+                        &exchange_params,
+                        &state_params,
+                        &bot_params,
+                        &position,
+                        &trailing_price_bundle,
+                    )
+                }
             } else {
                 let mut bot_params_modified = bot_params.clone();
                 bot_params_modified.wallet_exposure_limit =
                     bot_params.wallet_exposure_limit * bot_params.entry_trailing_grid_ratio * 1.01;
-                calc_trailing_entry_long(
-                    &exchange_params,
-                    &state_params,
-                    &bot_params_modified,
-                    &position,
-                    &trailing_price_bundle,
-                )
+                if bot_params.enable_divergence_entry {
+                    calc_divergence_entry_long(
+                        &exchange_params,
+                        &state_params,
+                        &bot_params_modified,
+                        &position,
+                        &divergence_bundle,
+                    )
+                } else {
+                    calc_trailing_entry_long(
+                        &exchange_params,
+                        &state_params,
+                        &bot_params_modified,
+                        &position,
+                        &trailing_price_bundle,
+                    )
+                }
             }
         } else {
             // return grid order
@@ -378,13 +410,23 @@ pub fn calc_next_entry_long(
                 )
             }
         } else {
-            calc_trailing_entry_long(
-                &exchange_params,
-                &state_params,
-                &bot_params,
-                &position,
-                &trailing_price_bundle,
-            )
+            if bot_params.enable_divergence_entry {
+                calc_divergence_entry_long(
+                    &exchange_params,
+                    &state_params,
+                    &bot_params,
+                    &position,
+                    &divergence_bundle,
+                )
+            } else {
+                calc_trailing_entry_long(
+                    &exchange_params,
+                    &state_params,
+                    &bot_params,
+                    &position,
+                    &trailing_price_bundle,
+                )
+            }
         }
     }
 }
@@ -522,6 +564,31 @@ pub fn calc_trailing_entry_long(
             order_type: OrderType::EntryTrailingNormalLong,
         }
     }
+}
+
+pub fn calc_divergence_entry_long(
+    exchange_params: &ExchangeParams,
+    state_params: &StateParams,
+    bot_params: &BotParams,
+    position: &Position,
+    divergence_bundle: &DivergenceBundle,
+) -> Order {
+    if !bot_params.enable_divergence_entry {
+        return Order::default();
+    }
+    if divergence_bundle.curr_low < divergence_bundle.prev_low
+        && divergence_bundle.curr_rsi
+            > divergence_bundle.prev_rsi + bot_params.divergence_rsi_tolerance
+    {
+        let entry_price = state_params.order_book.bid;
+        let qty = calc_min_entry_qty(entry_price, exchange_params);
+        return Order {
+            qty,
+            price: entry_price,
+            order_type: OrderType::EntryDivergenceLong,
+        };
+    }
+    Order::default()
 }
 
 pub fn calc_grid_entry_short(
@@ -913,6 +980,7 @@ pub fn calc_entries_long(
     bot_params: &BotParams,
     position: &Position,
     trailing_price_bundle: &TrailingPriceBundle,
+    divergence_bundle: &DivergenceBundle,
 ) -> Vec<Order> {
     let mut entries = Vec::<Order>::new();
     let mut psize = position.size;
@@ -931,6 +999,7 @@ pub fn calc_entries_long(
             bot_params,
             &position_mod,
             &trailing_price_bundle,
+            &divergence_bundle,
         );
         if entry.qty == 0.0 {
             break;
