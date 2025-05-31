@@ -7,7 +7,7 @@ use crate::entries::{
 };
 use crate::types::{
     Analysis, BacktestParams, BotParams, BotParamsPair, EMABands, Equities, ExchangeParams, Order,
-    OrderBook, Position, StateParams, TrailingPriceBundle,
+    OrderBook, Position, StateParams, TrailingPriceBundle, DivergenceBundle,
 };
 use memmap::MmapOptions;
 use ndarray::{Array1, Array2, Array3, Array4, ArrayBase, ArrayD, ArrayView, ShapeBuilder};
@@ -254,6 +254,12 @@ fn bot_params_from_dict(dict: &PyDict) -> PyResult<BotParams> {
         unstuck_ema_dist: extract_value(dict, "unstuck_ema_dist")?,
         unstuck_loss_allowance_pct: extract_value(dict, "unstuck_loss_allowance_pct")?,
         unstuck_threshold: extract_value(dict, "unstuck_threshold")?,
+        enable_divergence_entry: extract_bool_value(dict, "enable_divergence_entry")?,
+        divergence_rsi_period: {
+            let p: f64 = extract_value(dict, "divergence_rsi_period")?;
+            p.round() as usize
+        },
+        divergence_rsi_tolerance: extract_value(dict, "divergence_rsi_tolerance")?,
     })
 }
 
@@ -290,6 +296,10 @@ pub fn calc_next_entry_long_py(
     max_since_min: f64,
     ema_bands_lower: f64,
     order_book_bid: f64,
+    div_prev_low: f64,
+    div_curr_low: f64,
+    div_prev_rsi: f64,
+    div_curr_rsi: f64,
 ) -> (f64, f64, String) {
     let exchange_params = ExchangeParams {
         qty_step,
@@ -332,12 +342,19 @@ pub fn calc_next_entry_long_py(
         max_since_min: max_since_min,
         ..Default::default()
     };
+    let divergence_bundle = DivergenceBundle {
+        prev_low: div_prev_low,
+        curr_low: div_curr_low,
+        prev_rsi: div_prev_rsi,
+        curr_rsi: div_curr_rsi,
+    };
     let next_entry = calc_next_entry_long(
         &exchange_params,
         &state_params,
         &bot_params,
         &position,
         &trailing_price_bundle,
+        &divergence_bundle,
     );
 
     (
@@ -598,6 +615,10 @@ pub fn calc_entries_long_py(
     max_since_min: f64,
     ema_bands_lower: f64,
     order_book_bid: f64,
+    div_prev_low: f64,
+    div_curr_low: f64,
+    div_prev_rsi: f64,
+    div_curr_rsi: f64,
 ) -> Vec<(f64, f64, String)> {
     let exchange_params = ExchangeParams {
         qty_step,
@@ -643,12 +664,19 @@ pub fn calc_entries_long_py(
         max_since_min: max_since_min,
         ..Default::default()
     };
+    let divergence_bundle = DivergenceBundle {
+        prev_low: div_prev_low,
+        curr_low: div_curr_low,
+        prev_rsi: div_prev_rsi,
+        curr_rsi: div_curr_rsi,
+    };
     let entries = calc_entries_long(
         &exchange_params,
         &state_params,
         &bot_params,
         &position,
         &trailing_price_bundle,
+        &divergence_bundle,
     );
 
     // Convert entries to Python-compatible format

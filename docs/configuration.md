@@ -76,6 +76,12 @@ The same logic applies to both trailing entries and trailing closes.
     - `if highest price since position change > position price * (1 + trailing_threshold_pct)`, the first condition is met.
     - `if lowest price since highest price < highest price since position change * (1 - trailing_retracement_pct)`, the second condition is met. Place order.
   - Passivbot tracks its own trailing prices and does not use special trailing order types from the exchange.
+
+### Divergence Entry Parameters
+
+- **enable_divergence_entry**: If `true`, use 15m bullish divergence instead of trailing logic for long entries.
+- **divergence_rsi_period**: RSI period, measured in 15m candles, for divergence detection.
+- **divergence_rsi_tolerance**: Required minimum difference between consecutive RSI lows to signal divergence.
   - Trailing price tracker resets when the position changes (add to or partially close).
   - Trailing price tracking is based on 1m OHLCVs, updated on each new whole minute.
 
